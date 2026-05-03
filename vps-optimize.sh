@@ -8,7 +8,7 @@
 # POSIX sh；禁止未定义变量
 set -u
 
-# ── 颜色（仅 TTY）────────────────────────────────────────────────────────────
+# ── 颜色（仅 TTY）─────────────────────────────────────────────────────────
 if [ -t 1 ]; then
     cR='\033[0;31m' cG='\033[0;32m' cY='\033[1;33m'
     cB='\033[0;34m' cC='\033[0;36m' cW='\033[1m' cN='\033[0m'
@@ -42,7 +42,7 @@ FLAG_ZRAM_RATIO=0
 FLAG_SWAP_MB=0
 FLAG_RAM_SPEC=0
 
-# ── 固定路径 ──────────────────────────────────────────────────────────────────
+# ── 固定路径 ───────────────────────────────────────────────────────────
 SYSCTL_CONF="/etc/sysctl.d/99-vps-optimize.conf"
 ZRAM_INIT_SH="/usr/local/sbin/vps-zram-init.sh"
 ZRAM_FINI_SH="/usr/local/sbin/vps-zram-fini.sh"
@@ -57,7 +57,7 @@ STAMP="/etc/vps-optimize.stamp"
 # 参数解析
 # =============================================================================
 parse_args() {
-    while[ $# -gt 0 ]; do
+    while [ $# -gt 0 ]; do
         case "$1" in
             --ram|-r)
                 [ $# -ge 2 ] || die "--ram 缺少参数"
@@ -67,10 +67,12 @@ parse_args() {
                 [ $# -ge 2 ] || die "--zram-ratio 缺少参数"
                 OPT_ZRAM_RATIO="$2"
                 FLAG_ZRAM_RATIO=1
-                ( expr "$OPT_ZRAM_RATIO" + 0 >/dev/null 2>&1 ) || die "--zram-ratio 必须为整数"[ "$OPT_ZRAM_RATIO" -ge 1 ] &&[ "$OPT_ZRAM_RATIO" -le 95 ] \
+                ( expr "$OPT_ZRAM_RATIO" + 0 >/dev/null 2>&1 ) || die "--zram-ratio 必须为整数"
+                [ "$OPT_ZRAM_RATIO" -ge 1 ] && [ "$OPT_ZRAM_RATIO" -le 95 ] \
                     || die "--zram-ratio 需在 1-95 之间，当前：${OPT_ZRAM_RATIO}"
                 shift 2 ;;
-            --swap)[ $# -ge 2 ] || die "--swap 缺少参数"
+            --swap)
+                [ $# -ge 2 ] || die "--swap 缺少参数"
                 OPT_SWAP_MB="$2"
                 FLAG_SWAP_MB=1
                 ( expr "$OPT_SWAP_MB" + 0 >/dev/null 2>&1 ) || die "--swap 必须为整数（MB）"
@@ -94,7 +96,7 @@ parse_args() {
 xrun() { [ "$OPT_DRYRUN" -eq 1 ] && { log_dry "$*"; return 0; }; sh -c "$*" || { log_warn "命令失败：$*"; return 1; }; }
 xrun_q() { [ "$OPT_DRYRUN" -eq 1 ] && { log_dry "$*"; return 0; }; sh -c "$*" >/dev/null 2>&1 || true; }
 has() { command -v "$1" >/dev/null 2>&1; }
-kge() { [ "$K_MAJOR" -gt "$1" ] && return 0;[ "$K_MAJOR" -eq "$1" ] && [ "$K_MINOR" -ge "$2" ] && return 0; return 1; }
+kge() { [ "$K_MAJOR" -gt "$1" ] && return 0; [ "$K_MAJOR" -eq "$1" ] && [ "$K_MINOR" -ge "$2" ] && return 0; return 1; }
 to_mb() {
     _s="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
     _n="$(printf '%s' "$_s" | grep -o '^[0-9]*')"
@@ -106,7 +108,7 @@ to_mb() {
     esac
 }
 set_zram_ratio() { [ "$FLAG_ZRAM_RATIO" -eq 0 ] && OPT_ZRAM_RATIO="$1" || true; }
-set_swap_mb()    {[ "$FLAG_SWAP_MB"    -eq 0 ] && OPT_SWAP_MB="$1"    || true; }
+set_swap_mb()    { [ "$FLAG_SWAP_MB" -eq 0 ] && OPT_SWAP_MB="$1" || true; }
 
 # =============================================================================
 # 系统检测
@@ -120,11 +122,11 @@ detect_distro() {
     elif [ -f /etc/debian_version ]; then
         PKG_MGR="apt"
         grep -qi ubuntu /etc/os-release 2>/dev/null && DISTRO="ubuntu" || DISTRO="debian"
-    elif[ -f /etc/redhat-release ] || [ -f /etc/centos-release ]; then
+    elif [ -f /etc/redhat-release ] || [ -f /etc/centos-release ]; then
         DISTRO="rhel"
         PKG_MGR="$(has dnf && echo dnf || echo yum)"
     fi
-    if[ "$INIT_SYS" = "systemd" ] && ! has systemctl; then INIT_SYS="openrc"; fi
+    if [ "$INIT_SYS" = "systemd" ] && ! has systemctl; then INIT_SYS="openrc"; fi
     log_info "发行版=${DISTRO}  包管理=${PKG_MGR:-未知}  Init=${INIT_SYS}"
 }
 
@@ -138,7 +140,7 @@ detect_kernel() {
 
     SUPPORT_BBR=0; kge 4 9 && SUPPORT_BBR=1
     SUPPORT_ZRAM=0
-    if lsmod 2>/dev/null | grep -q '^zram' || modprobe -n zram >/dev/null 2>&1 || [ -d /sys/class/zram-control ] ||[ -f /sys/block/zram0/comp_algorithm ]; then
+    if lsmod 2>/dev/null | grep -q '^zram' || modprobe -n zram >/dev/null 2>&1 || [ -d /sys/class/zram-control ] || [ -f /sys/block/zram0/comp_algorithm ]; then
         SUPPORT_ZRAM=1
     fi
     SUPPORT_FQ=0
@@ -149,8 +151,9 @@ detect_kernel() {
 detect_virt() {
     VIRT_TYPE="unknown"; IS_CONTAINER=0
     has systemd-detect-virt && VIRT_TYPE="$(systemd-detect-virt 2>/dev/null || true)"
-    if[ -z "$VIRT_TYPE" ] || [ "$VIRT_TYPE" = "none" ] ||[ "$VIRT_TYPE" = "unknown" ]; then
-        grep -qiE 'QEMU|KVM' /proc/cpuinfo 2>/dev/null && VIRT_TYPE="kvm"[ -f /proc/xen/capabilities ] && VIRT_TYPE="xen"
+    if [ -z "$VIRT_TYPE" ] || [ "$VIRT_TYPE" = "none" ] || [ "$VIRT_TYPE" = "unknown" ]; then
+        grep -qiE 'QEMU|KVM' /proc/cpuinfo 2>/dev/null && VIRT_TYPE="kvm"
+        [ -f /proc/xen/capabilities ] && VIRT_TYPE="xen"
     fi
     case "${VIRT_TYPE:-}" in
         lxc*|openvz*|container|podman) IS_CONTAINER=1 ;;
@@ -162,8 +165,9 @@ detect_virt() {
 detect_memory() {
     MEM_TOTAL_KB="$(grep '^MemTotal:' /proc/meminfo | awk '{print $2}')"
     MEM_TOTAL_MB="$(( MEM_TOTAL_KB / 1024 ))"
-    if[ "$FLAG_RAM_SPEC" -eq 1 ] && [ -n "$OPT_RAM_SPEC" ]; then
-        EFFECTIVE_MB="$(to_mb "$OPT_RAM_SPEC")"[ "$EFFECTIVE_MB" -gt 0 ] || die "--ram 参数解析失败"
+    if [ "$FLAG_RAM_SPEC" -eq 1 ] && [ -n "$OPT_RAM_SPEC" ]; then
+        EFFECTIVE_MB="$(to_mb "$OPT_RAM_SPEC")"
+        [ "$EFFECTIVE_MB" -gt 0 ] || die "--ram 参数解析失败"
     else
         EFFECTIVE_MB="$MEM_TOTAL_MB"
     fi
@@ -174,7 +178,7 @@ detect_disk() {
     _dir="$(dirname "$OPT_SWAP_PATH")"
     [ -d "$_dir" ] || _dir="/"  # 防止目录未创建时 df 失败
     DISK_FREE_MB="$(df -m "$_dir" 2>/dev/null | awk 'NR==2{print $4}')"
-    if[ -z "$DISK_FREE_MB" ] || ! expr "$DISK_FREE_MB" + 0 >/dev/null 2>&1; then
+    if [ -z "$DISK_FREE_MB" ] || ! expr "$DISK_FREE_MB" + 0 >/dev/null 2>&1; then
         DISK_FREE_MB="$(df "$_dir" 2>/dev/null | awk 'NR==2{printf "%d", $4/1024}')"
     fi
     [ -z "$DISK_FREE_MB" ] && DISK_FREE_MB=9999
@@ -191,9 +195,9 @@ compute_policy() {
     VM_MIN_FREE_KB=32768; ZRAM_STREAMS=2; NET_RMEM_MAX=134217728; NET_WMEM_MAX=134217728
     NET_SOMAXCONN=32768; NET_BACKLOG=32768
 
-    if[ "$FLAG_RAM_SPEC" -eq 1 ]; then
+    if [ "$FLAG_RAM_SPEC" -eq 1 ]; then
         if [ "$EFFECTIVE_MB" -le 128 ]; then set_zram_ratio 80; set_swap_mb 1024
-        elif[ "$EFFECTIVE_MB" -le 256 ]; then set_zram_ratio 75; set_swap_mb 512
+        elif [ "$EFFECTIVE_MB" -le 256 ]; then set_zram_ratio 75; set_swap_mb 512
         elif [ "$EFFECTIVE_MB" -le 512 ]; then set_zram_ratio 60; set_swap_mb 512
         fi
     fi
@@ -204,7 +208,7 @@ compute_policy() {
         VM_SWAPPINESS=85; VM_DIRTY_RATIO=15; VM_DIRTY_BG=3
         VM_MIN_FREE_KB=4096; ZRAM_STREAMS=1
         NET_RMEM_MAX=4194304; NET_WMEM_MAX=4194304; NET_SOMAXCONN=128; NET_BACKLOG=128
-    elif[ "$EFFECTIVE_MB" -le 256 ]; then
+    elif [ "$EFFECTIVE_MB" -le 256 ]; then
         IS_TINY=1
         set_zram_ratio 75; set_swap_mb 512
         VM_SWAPPINESS=60; VM_DIRTY_RATIO=25; VM_DIRTY_BG=8
@@ -222,27 +226,30 @@ compute_policy() {
         OPT_ZRAM=0
     fi
 
-    if[ "$DISK_FREE_MB" -lt 1024 ]; then
+    if [ "$DISK_FREE_MB" -lt 1024 ]; then
         IS_TINY_DISK=1
         log_warn "磁盘紧张，启用保守策略"
         set_zram_ratio 90
-        if[ "$FLAG_SWAP_MB" -eq 0 ]; then
-            _want=256[ "$EFFECTIVE_MB" -le 128 ] && _want=128
-            _max=$(( DISK_FREE_MB * 60 / 100 ))[ "$_want" -gt "$_max" ] && _want="$_max"
+        if [ "$FLAG_SWAP_MB" -eq 0 ]; then
+            _want=256
+            [ "$EFFECTIVE_MB" -le 128 ] && _want=128
+            _max=$(( DISK_FREE_MB * 60 / 100 ))
+            [ "$_want" -gt "$_max" ] && _want="$_max"
             if [ "$_want" -lt 32 ]; then OPT_SWAP=0; else OPT_SWAP_MB="$_want"; fi
         fi
         [ "$VM_SWAPPINESS" -lt 70 ] && VM_SWAPPINESS=70
         [ "$VM_MIN_FREE_KB" -gt 4096 ] && VM_MIN_FREE_KB=4096
     fi
 
-    if[ "$OPT_SWAP" -eq 1 ] && [ "$FLAG_SWAP_MB" -eq 1 ]; then
+    if [ "$OPT_SWAP" -eq 1 ] && [ "$FLAG_SWAP_MB" -eq 1 ]; then
         _safe=$(( DISK_FREE_MB * 75 / 100 ))
-        if[ "$_safe" -gt 0 ] && [ "$OPT_SWAP_MB" -gt "$_safe" ]; then
+        if [ "$_safe" -gt 0 ] && [ "$OPT_SWAP_MB" -gt "$_safe" ]; then
             OPT_SWAP_MB="$_safe"
         fi
     fi
 
-    ZRAM_SIZE_MB=$(( MEM_TOTAL_MB * OPT_ZRAM_RATIO / 100 ))[ "$ZRAM_SIZE_MB" -lt 32 ] && ZRAM_SIZE_MB=32
+    ZRAM_SIZE_MB=$(( MEM_TOTAL_MB * OPT_ZRAM_RATIO / 100 ))
+    [ "$ZRAM_SIZE_MB" -lt 32 ] && ZRAM_SIZE_MB=32
 }
 
 install_deps() {
@@ -263,13 +270,14 @@ _gen_zram_init() {
     printf 'ZRAM_STREAMS=%d\n' "$ZRAM_STREAMS"
     cat <<'BODY'
 _cleanup() {
-    for d in /dev/zram*; do[ -b "$d" ] && swapoff "$d" 2>/dev/null || true; done
+    for d in /dev/zram*; do [ -b "$d" ] && swapoff "$d" 2>/dev/null || true; done
     modprobe -r zram 2>/dev/null || true
-    i=0; while[ -b /dev/zram0 ] && [ $i -lt 15 ]; do sleep 0.2; i=$(( i+1 )); done
+    i=0; while [ -b /dev/zram0 ] && [ $i -lt 15 ]; do sleep 0.2; i=$(( i+1 )); done
 }
 _load() {
     modprobe zram num_devices=1 || exit 1
-    i=0; while [ ! -b /dev/zram0 ] &&[ $i -lt 20 ]; do sleep 0.2; i=$(( i+1 )); done[ -b /dev/zram0 ] || exit 1
+    i=0; while [ ! -b /dev/zram0 ] && [ $i -lt 20 ]; do sleep 0.2; i=$(( i+1 )); done
+    [ -b /dev/zram0 ] || exit 1
 }
 _pick_algo() {
     _av="$(cat /sys/block/zram0/comp_algorithm 2>/dev/null)"
@@ -277,7 +285,8 @@ _pick_algo() {
 }
 _cleanup; _load
 _algo="$(_pick_algo)"
-[ -n "$_algo" ] && printf '%s' "$_algo" > /sys/block/zram0/comp_algorithm[ -f /sys/block/zram0/max_comp_streams ] && printf '%d' "$ZRAM_STREAMS" > /sys/block/zram0/max_comp_streams
+[ -n "$_algo" ] && printf '%s' "$_algo" > /sys/block/zram0/comp_algorithm
+[ -f /sys/block/zram0/max_comp_streams ] && printf '%d' "$ZRAM_STREAMS" > /sys/block/zram0/max_comp_streams
 printf '%d' "$ZRAM_BYTES" > /sys/block/zram0/disksize
 mkswap -L zram0 /dev/zram0 >/dev/null 2>&1
 swapon -p 100 /dev/zram0
@@ -288,7 +297,7 @@ setup_zram() {
     log_step "配置 ZRAM（${ZRAM_SIZE_MB}MB）"
     if [ "$OPT_ZRAM" -eq 0 ] || [ "$SUPPORT_ZRAM" -eq 0 ]; then return 0; fi
 
-    if[ "$OPT_DRYRUN" -eq 0 ]; then
+    if [ "$OPT_DRYRUN" -eq 0 ]; then
         mkdir -p /usr/local/sbin
         _gen_zram_init > "$ZRAM_INIT_SH"
         printf '#!/bin/sh\nfor d in /dev/zram*; do [ -b "$d" ] && swapoff "$d" 2>/dev/null || true; done\nmodprobe -r zram 2>/dev/null || true\n' > "$ZRAM_FINI_SH"
@@ -332,7 +341,7 @@ setup_swap() {
 
     grep -qsw "$OPT_SWAP_PATH" /proc/swaps 2>/dev/null && xrun "swapoff ${OPT_SWAP_PATH} || true"
 
-    if[ "$OPT_DRYRUN" -eq 0 ]; then
+    if [ "$OPT_DRYRUN" -eq 0 ]; then
         _dir="$(dirname "$OPT_SWAP_PATH")"; mkdir -p "$_dir"
         _fs="$(df -T "$_dir" 2>/dev/null | awk 'NR==2{print $2}')"
         rm -f "$OPT_SWAP_PATH"
@@ -363,9 +372,10 @@ setup_swap() {
 setup_bbr() {
     log_step "配置网络 TCP 与拥塞控制"
     CC_ALGO="cubic"; QDISC="fq_codel"
-    if [ "$OPT_BBR" -eq 1 ] &&[ "$SUPPORT_BBR" -eq 1 ]; then
-        CC_ALGO="bbr";[ "$SUPPORT_FQ" -eq 1 ] && QDISC="fq"
-        if[ "$OPT_DRYRUN" -eq 0 ]; then
+    if [ "$OPT_BBR" -eq 1 ] && [ "$SUPPORT_BBR" -eq 1 ]; then
+        CC_ALGO="bbr"
+        [ "$SUPPORT_FQ" -eq 1 ] && QDISC="fq"
+        if [ "$OPT_DRYRUN" -eq 0 ]; then
             modprobe tcp_bbr 2>/dev/null || true
             sysctl -wq net.ipv4.tcp_congestion_control="$CC_ALGO" 2>/dev/null || true
             sysctl -wq net.core.default_qdisc="$QDISC" 2>/dev/null || true
@@ -374,7 +384,8 @@ setup_bbr() {
 }
 
 write_sysctl() {
-    _rmem="4096 87380 ${NET_RMEM_MAX}"; _wmem="4096 65536 ${NET_WMEM_MAX}"[ "$IS_MICRO" -eq 1 ] && _rmem="4096 32768 ${NET_RMEM_MAX}" && _wmem="4096 16384 ${NET_WMEM_MAX}"
+    _rmem="4096 87380 ${NET_RMEM_MAX}"; _wmem="4096 65536 ${NET_WMEM_MAX}"
+    [ "$IS_MICRO" -eq 1 ] && _rmem="4096 32768 ${NET_RMEM_MAX}" && _wmem="4096 16384 ${NET_WMEM_MAX}"
 
     _conf="
 # 拥塞控制
@@ -397,7 +408,7 @@ net.ipv4.tcp_tw_reuse = 1
 net.ipv4.tcp_fastopen = 3
 net.ipv4.tcp_mtu_probing = 1
 "
-    if[ "$OPT_DRYRUN" -eq 0 ]; then
+    if [ "$OPT_DRYRUN" -eq 0 ]; then
         mkdir -p /etc/sysctl.d
         printf '%s\n' "$_conf" > "$SYSCTL_CONF"
         sysctl -p "$SYSCTL_CONF" >/dev/null 2>&1 || sysctl --system >/dev/null 2>&1
@@ -423,16 +434,18 @@ tiny_vps_extras() {
 # 卸载
 # =============================================================================
 do_uninstall() {
-    log_step "撤销所有修改"[ -f "$SYSCTL_CONF" ] && rm -f "$SYSCTL_CONF" && sysctl --system >/dev/null 2>&1 || true
-    if [ "$INIT_SYS" = "openrc" ]; then[ -f "$ZRAM_SVC_ORC_STOP" ] && sh "$ZRAM_SVC_ORC_STOP" 2>/dev/null || true
+    log_step "撤销所有修改"
+    [ -f "$SYSCTL_CONF" ] && rm -f "$SYSCTL_CONF" && sysctl --system >/dev/null 2>&1 || true
+    if [ "$INIT_SYS" = "openrc" ]; then
+        [ -f "$ZRAM_SVC_ORC_STOP" ] && sh "$ZRAM_SVC_ORC_STOP" 2>/dev/null || true
         rm -f "$ZRAM_SVC_ORC_START" "$ZRAM_SVC_ORC_STOP"
     else
         systemctl disable --now zram-swap.service >/dev/null 2>&1 || true
         rm -f "$ZRAM_SVC_SYSTEMD"
     fi
-    for _d in /dev/zram*; do[ -b "$_d" ] && swapoff "$_d" 2>/dev/null || true; done
+    for _d in /dev/zram*; do [ -b "$_d" ] && swapoff "$_d" 2>/dev/null || true; done
     rm -f "$ZRAM_INIT_SH" "$ZRAM_FINI_SH"
-    if[ -f "$OPT_SWAP_PATH" ]; then
+    if [ -f "$OPT_SWAP_PATH" ]; then
         swapoff "$OPT_SWAP_PATH" 2>/dev/null || true
         rm -f "$OPT_SWAP_PATH"
         sed -i "\|^${OPT_SWAP_PATH}[[:space:]]|d" /etc/fstab 2>/dev/null || true
@@ -457,7 +470,7 @@ main() {
     detect_distro; detect_kernel; detect_virt; detect_memory; detect_disk
     compute_policy
 
-    if[ "$OPT_UNINSTALL" -eq 1 ]; then do_uninstall; exit 0; fi
+    if [ "$OPT_UNINSTALL" -eq 1 ]; then do_uninstall; exit 0; fi
 
     install_deps
     setup_zram
