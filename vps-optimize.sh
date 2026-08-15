@@ -2,17 +2,24 @@
 set -euo pipefail
 
 # ═══════════════════════════════════════════════════════════════
-# Alpine LXC 小鸡一键：系统优化 + SOCKS5 代理部署 + 验证
-# 适用：Alpine 3.23 LXC + OpenRC，root 直接粘贴
-# 组成：vps-optimize.sh v2.1.0（内嵌） + sixhop SOCKS5
-# 修复：compute_policy 返回码 / apply_sysctl 兜底 / LXC 容器检测
+# vps-optimize.sh — VPS 网络 & 内存优化 + 可选 SOCKS5 代理部署
+# 适用：Alpine LXC + OpenRC（也兼容 Debian/Ubuntu/CentOS）
+#
+# 用法：
+#   sh vps-optimize.sh                      通用优化（默认）
+#   sh vps-optimize.sh --bandwidth 500 --rtt 100
+#   sh vps-optimize.sh --proxy              代理落地专项优化
+#   sh vps-optimize.sh --deploy             代理优化 + 部署 SOCKS5 + 验证
+#   sh vps-optimize.sh --deploy --port 2080 --bandwidth 500
+#   sh vps-optimize.sh --dry-run            预览
+#   sh vps-optimize.sh --uninstall          卸载
 # ═══════════════════════════════════════════════════════════════
 
-# ─────────── 可调参数 ───────────
-BW_MBPS="500"          # 带宽(Mbps)，留空=按内存档位
-RTT_MS="100"           # 到主目标节点 RTT(ms)，建议先 ping 实测
-MTU=""                 # 手动 MTU(如 1450)，留空=不干预
-PROXY_PORT="1080"      # SOCKS5 监听端口
+# ─────────── 可调默认值（命令行参数可覆盖） ───────────
+BW_MBPS=""          # 默认带宽(Mbps)，留空=按内存档位；--bandwidth 覆盖
+RTT_MS="100"        # 默认 RTT(ms)，建议 ping 实测；--rtt 覆盖
+MTU=""              # 默认 MTU(如 1450)，留空=不干预；--mtu 覆盖
+PROXY_PORT="1080"   # SOCKS5 监听端口；--port 覆盖
 SIXHOP_VERSION="v0.0.2.1"
 case "$(uname -m)" in
     aarch64|arm64) SIXHOP_ARCH="aarch64" ;;
@@ -42,8 +49,9 @@ die()      { log_err "$*"; exit 1; }
 # ---- 优化器默认值 ----
 OPT_RAM_SPEC=""; OPT_ZRAM_RATIO=50; OPT_SWAP_MB=256; OPT_SWAP_PATH="/swapfile"
 OPT_ZRAM=1; OPT_SWAP=1; OPT_BBR=1; OPT_TCP=1; OPT_DRYRUN=0; OPT_UNINSTALL=0
-OPT_BW_MBPS=""; OPT_RTT_MS=100; OPT_MTU=""; OPT_PROXY=0
+OPT_BW_MBPS=""; OPT_RTT_MS=100; OPT_MTU=""; OPT_PROXY=0; OPT_DEPLOY=0
 FLAG_ZRAM_RATIO=0; FLAG_SWAP_MB=0; FLAG_RAM_SPEC=0
+FLAG_BW=0; FLAG_RTT=0; FLAG_MTU=0
 SYSCTL_CONF="/etc/sysctl.d/99-vps-optimize.conf"
 ZRAM_INIT_SH="/usr/local/sbin/vps-zram-init.sh"
 ZRAM_FINI_SH="/usr/local/sbin/vps-zram-fini.sh"
@@ -76,30 +84,51 @@ parse_args() {
         --swap-path) [ $# -ge 2 ] || die "--swap-path 缺少参数"; OPT_SWAP_PATH="$2"; shift 2 ;;
         --bandwidth|-b)
             [ $# -ge 2 ] || die "--bandwidth 缺少参数"
-            OPT_BW_MBPS="$2"
+            OPT_BW_MBPS="$2"; FLAG_BW=1
             ( expr "$OPT_BW_MBPS" + 0 >/dev/null 2>&1 ) || die "--bandwidth 必须为整数（Mbps）"
             [ "$OPT_BW_MBPS" -ge 1 ] && [ "$OPT_BW_MBPS" -le 100000 ] || die "--bandwidth 需在 1-100000"
             shift 2 ;;
         --rtt)
             [ $# -ge 2 ] || die "--rtt 缺少参数"
-            OPT_RTT_MS="$2"
+            OPT_RTT_MS="$2"; FLAG_RTT=1
             ( expr "$OPT_RTT_MS" + 0 >/dev/null 2>&1 ) || die "--rtt 必须为整数（毫秒）"
             [ "$OPT_RTT_MS" -ge 1 ] && [ "$OPT_RTT_MS" -le 5000 ] || die "--rtt 需在 1-5000"
             shift 2 ;;
         --mtu)
             [ $# -ge 2 ] || die "--mtu 缺少参数"
-            OPT_MTU="$2"
+            OPT_MTU="$2"; FLAG_MTU=1
             ( expr "$OPT_MTU" + 0 >/dev/null 2>&1 ) || die "--mtu 必须为整数"
             [ "$OPT_MTU" -ge 1200 ] && [ "$OPT_MTU" -le 1500 ] || die "--mtu 需在 1200-1500"
             shift 2 ;;
+        --port)
+            [ $# -ge 2 ] || die "--port 缺少参数"
+            PROXY_PORT="$2"
+            ( expr "$PROXY_PORT" + 0 >/dev/null 2>&1 ) || die "--port 必须为整数"
+            [ "$PROXY_PORT" -ge 1 ] && [ "$PROXY_PORT" -le 65535 ] || die "--port 需在 1-65535"
+            shift 2 ;;
         --proxy|-p) OPT_PROXY=1; shift ;;
+        --deploy|-d) OPT_DEPLOY=1; OPT_PROXY=1; shift ;;
         --no-zram)  OPT_ZRAM=0; shift ;;
         --no-swap)  OPT_SWAP=0; shift ;;
         --no-bbr)   OPT_BBR=0; shift ;;
         --no-tcp)   OPT_TCP=0; shift ;;
         --dry-run)  OPT_DRYRUN=1; shift ;;
         --uninstall) OPT_UNINSTALL=1; shift ;;
-        --help|-h) printf "用法: sh $0 [选项]\n"; exit 0 ;;
+        --help|-h)
+            printf "用法: sh $0 [选项]\n"
+            printf "通用优化（无参数即执行）:\n"
+            printf "  --bandwidth, -b <Mbps>  带宽感知 TCP 窗口\n"
+            printf "  --rtt <ms>              RTT（配合带宽）\n"
+            printf "  --mtu <1200-1500>       手动 MTU\n"
+            printf "  --ram, --zram-ratio, --swap, --swap-path\n"
+            printf "  --no-zram, --no-swap, --no-bbr, --no-tcp\n"
+            printf "  --dry-run               预览\n"
+            printf "  --uninstall             卸载\n"
+            printf "代理专项（需显式启用）:\n"
+            printf "  --proxy, -p             代理落地专项优化（并发优先）\n"
+            printf "  --deploy, -d            部署 SOCKS5 代理(sixhop)并验证（隐含 --proxy）\n"
+            printf "  --port <1-65535>        SOCKS5 监听端口（默认 1080）\n"
+            exit 0 ;;
         *) log_warn "未知参数 '$1'（忽略）"; shift ;;
         esac
     done
@@ -122,7 +151,6 @@ to_mb() {
 set_zram_ratio() { [ "$FLAG_ZRAM_RATIO" -eq 0 ] && OPT_ZRAM_RATIO="$1" || true; }
 set_swap_mb()    { [ "$FLAG_SWAP_MB" -eq 0 ] && OPT_SWAP_MB="$1" || true; }
 
-# 【修复 2】apply_sysctl：任何分支都保证返回 0，避免 set -e 误杀
 apply_sysctl() {
     _f="$1"
     if [ "$INIT_SYS" = "openrc" ] && has rc-service; then
@@ -181,7 +209,7 @@ detect_virt() {
         lxc*|openvz*|container|podman) IS_CONTAINER=1 ;;
         *) grep -q 'docker\|lxc\|kubepods' /proc/1/cgroup 2>/dev/null && IS_CONTAINER=1 || true ;;
     esac
-    # 【修复 3】无 systemd 时的 LXC/Docker 兜底检测
+    # LXC/Docker 兜底检测（无 systemd 环境）
     if grep -qa 'container=lxc' /proc/1/environ 2>/dev/null \
         || [ -f /.dockerenv ] \
         || grep -qaE 'lxc|docker' /proc/self/mountinfo 2>/dev/null; then
@@ -255,7 +283,7 @@ compute_policy() {
         NET_SOMAXCONN=4096; NET_BACKLOG=4096
     fi
 
-    # 带宽感知：BDP 计算 TCP 窗口
+    # 带宽感知：BDP 计算 TCP 窗口（仅 --bandwidth 时生效）
     if [ -n "$OPT_BW_MBPS" ]; then
         _bdp=$(( OPT_BW_MBPS * OPT_RTT_MS * 125 ))
         _buf=$(( _bdp * 2 ))
@@ -270,7 +298,7 @@ compute_policy() {
         log_info "带宽=${OPT_BW_MBPS}Mbps RTT=${OPT_RTT_MS}ms BDP=$(( _bdp / 1024 ))KiB 窗口上限=$(( _buf / 1024 / 1024 ))MiB"
     fi
 
-    # 代理落地模式：并发优先
+    # 代理落地模式：并发优先（仅 --proxy / --deploy 时生效）
     if [ "$OPT_PROXY" -eq 1 ]; then
         NET_SOMAXCONN=65536; NET_BACKLOG=65536
         IP_LOCAL_PORT_RANGE="1024 65535"
@@ -316,7 +344,6 @@ compute_policy() {
 
     ZRAM_SIZE_MB=$(( MEM_TOTAL_MB * OPT_ZRAM_RATIO / 100 ))
     [ "$ZRAM_SIZE_MB" -lt 32 ] && ZRAM_SIZE_MB=32
-    # 【修复 1】强制返回 0：末尾条件为假时不再被 set -e 终止
     return 0
 }
 
@@ -573,13 +600,19 @@ print_summary() {
     log_ok "优化配置写入完成！推荐重启服务器 (reboot) 以确保彻底生效。"
 }
 
+# 优化主流程（不解析参数，参数已在顶层解析）
 optimize_main() {
-    parse_args "$@"
     check_root
     printf "\n${cW}${cC}▶▶ vps-optimize v2.1.0 — 系统优化 ◀◀${cN}\n\n"
     detect_distro; detect_kernel; detect_virt; detect_memory; detect_disk
     compute_policy
-    if [ "$OPT_UNINSTALL" -eq 1 ]; then echo "（合并脚本中卸载请用原版）"; return 0; fi
+    if [ "$OPT_UNINSTALL" -eq 1 ]; then
+        log_step "撤销优化配置"
+        [ -f "$SYSCTL_CONF" ] && { rm -f "$SYSCTL_CONF"; reload_sysctl; }
+        [ -f "$LIMITS_CONF" ] && sed -i '/^# vps-optimize/,+2d' "$LIMITS_CONF" 2>/dev/null || true
+        log_ok "已撤销优化配置，建议重启"
+        return 0
+    fi
     install_deps
     setup_mtu
     setup_zram
@@ -593,7 +626,7 @@ optimize_main() {
 }
 
 # ============================================================
-# 第 2 部分：sixhop SOCKS5 部署
+# 第 2 部分：sixhop SOCKS5 部署（仅 --deploy 时执行）
 # ============================================================
 deploy_sixhop() {
     echo; echo "== 部署 SOCKS5 代理 (sixhop ${SIXHOP_VERSION}) =="
@@ -652,7 +685,7 @@ EOF
 }
 
 # ============================================================
-# 第 3 部分：验证 & 摘要
+# 第 3 部分：验证 & 摘要（仅 --deploy 时执行）
 # ============================================================
 verify_and_summary() {
     echo; echo "== 验证 =="
@@ -685,15 +718,24 @@ verify_and_summary() {
 }
 
 # ============================================================
-# 执行：先优化，再部署代理，最后验证
+# 执行入口：参数门控
 # ============================================================
-optimize_main --proxy \
-    ${BW_MBPS:+--bandwidth "$BW_MBPS"} \
-    --rtt "$RTT_MS" \
-    ${MTU:+--mtu "$MTU"}
+parse_args "$@"
 
-deploy_sixhop
-verify_and_summary
+# 顶层默认值兜底（命令行参数优先）
+[ "$FLAG_BW"  -eq 0 ] && [ -n "$BW_MBPS" ] && OPT_BW_MBPS="$BW_MBPS"
+[ "$FLAG_RTT" -eq 0 ] && OPT_RTT_MS="$RTT_MS"
+[ "$FLAG_MTU" -eq 0 ] && [ -n "$MTU" ] && OPT_MTU="$MTU"
 
-echo
-echo "OK 全部完成。建议稍后重启一次：reboot"
+# 不带参数 = 通用优化；--proxy = 代理专项；--deploy = 优化 + 部署 + 验证
+optimize_main
+
+if [ "$OPT_DEPLOY" -eq 1 ]; then
+    deploy_sixhop
+    verify_and_summary
+    echo
+    echo "OK 代理部署完成。建议稍后重启一次：reboot"
+else
+    echo
+    echo "OK 优化完成。提示：如需代理专项优化请加 --proxy，部署 SOCKS5 请加 --deploy"
+fi
