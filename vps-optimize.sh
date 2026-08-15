@@ -5,6 +5,7 @@ set -euo pipefail
 # Alpine LXC 小鸡一键：系统优化 + SOCKS5 代理部署 + 验证
 # 适用：Alpine 3.23 LXC + OpenRC，root 直接粘贴
 # 组成：vps-optimize.sh v2.1.0（内嵌） + sixhop SOCKS5
+# 修复：compute_policy 返回码 / apply_sysctl 兜底 / LXC 容器检测
 # ═══════════════════════════════════════════════════════════════
 
 # ─────────── 可调参数 ───────────
@@ -56,7 +57,10 @@ LIMITS_CONF="/etc/security/limits.conf"
 parse_args() {
     while [ $# -gt 0 ]; do
         case "$1" in
-        --ram|-r) [ $# -ge 2 ] || die "--ram 缺少参数"; OPT_RAM_SPEC="$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')"; FLAG_RAM_SPEC=1; shift 2 ;;
+        --ram|-r)
+            [ $# -ge 2 ] || die "--ram 缺少参数"
+            OPT_RAM_SPEC="$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')"
+            FLAG_RAM_SPEC=1; shift 2 ;;
         --zram-ratio)
             [ $# -ge 2 ] || die "--zram-ratio 缺少参数"
             OPT_ZRAM_RATIO="$2"; FLAG_ZRAM_RATIO=1
@@ -117,12 +121,14 @@ to_mb() {
 }
 set_zram_ratio() { [ "$FLAG_ZRAM_RATIO" -eq 0 ] && OPT_ZRAM_RATIO="$1" || true; }
 set_swap_mb()    { [ "$FLAG_SWAP_MB" -eq 0 ] && OPT_SWAP_MB="$1" || true; }
+
+# 【修复 2】apply_sysctl：任何分支都保证返回 0，避免 set -e 误杀
 apply_sysctl() {
     _f="$1"
     if [ "$INIT_SYS" = "openrc" ] && has rc-service; then
-        rc-service sysctl restart >/dev/null 2>&1 || sysctl -p "$_f" >/dev/null 2>&1
+        rc-service sysctl restart >/dev/null 2>&1 || sysctl -p "$_f" >/dev/null 2>&1 || true
     else
-        sysctl -p "$_f" >/dev/null 2>&1 || sysctl --system >/dev/null 2>&1
+        sysctl -p "$_f" >/dev/null 2>&1 || sysctl --system >/dev/null 2>&1 || true
     fi
 }
 reload_sysctl() {
@@ -175,6 +181,12 @@ detect_virt() {
         lxc*|openvz*|container|podman) IS_CONTAINER=1 ;;
         *) grep -q 'docker\|lxc\|kubepods' /proc/1/cgroup 2>/dev/null && IS_CONTAINER=1 || true ;;
     esac
+    # 【修复 3】无 systemd 时的 LXC/Docker 兜底检测
+    if grep -qa 'container=lxc' /proc/1/environ 2>/dev/null \
+        || [ -f /.dockerenv ] \
+        || grep -qaE 'lxc|docker' /proc/self/mountinfo 2>/dev/null; then
+        IS_CONTAINER=1
+    fi
     log_info "虚拟化=${VIRT_TYPE} 容器=${IS_CONTAINER}"
 }
 
@@ -304,6 +316,8 @@ compute_policy() {
 
     ZRAM_SIZE_MB=$(( MEM_TOTAL_MB * OPT_ZRAM_RATIO / 100 ))
     [ "$ZRAM_SIZE_MB" -lt 32 ] && ZRAM_SIZE_MB=32
+    # 【修复 1】强制返回 0：末尾条件为假时不再被 set -e 终止
+    return 0
 }
 
 install_deps() {
@@ -545,7 +559,11 @@ tiny_vps_extras() {
 cleanup_system() {
     if [ "$IS_TINY_DISK" -eq 1 ] && [ "$PKG_MGR" = "apk" ]; then
         log_step "清理 apk 缓存（磁盘紧张）"
-        [ "$OPT_DRYRUN" -eq 0 ] && { apk cache clean 2>/dev/null || true; } || log_dry "apk cache clean"
+        if [ "$OPT_DRYRUN" -eq 0 ]; then
+            apk cache clean 2>/dev/null || true
+        else
+            log_dry "apk cache clean"
+        fi
     fi
 }
 
@@ -650,7 +668,7 @@ verify_and_summary() {
     done
 
     if [ -n "$IP" ]; then
-        echo "出口 IP: ${IP}   ✔ 代理工作正常"
+        echo "出口 IP: ${IP}   OK 代理工作正常"
     else
         echo "出口 IP 获取失败，请检查: cat /var/log/sixhop.log"
     fi
@@ -678,4 +696,4 @@ deploy_sixhop
 verify_and_summary
 
 echo
-echo "✔ 全部完成。建议稍后重启一次：reboot"
+echo "OK 全部完成。建议稍后重启一次：reboot"
